@@ -4,10 +4,10 @@ This Ansible module provides a simple way to manage Gitlab Runner registration o
 
 ## Important
 
-This module uses new Gitlab Runner registration architecture. More details at [Gitlab Docs](https://docs.gitlab.com/ee/architecture/blueprints/runner_tokens/index.html#using-the-authentication-token-in-place-of-the-registration-token). It uses runner authentication token is used. **NOT** registration token which is deprecated.
+The module uses new Gitlab Runner registration architecture. More details at [Gitlab Docs](https://docs.gitlab.com/ee/architecture/blueprints/runner_tokens/index.html#using-the-authentication-token-in-place-of-the-registration-token). It uses runner authentication token, **NOT** registration token which is deprecated.
 
 At present the module doesn't support changing configuration without re-registration.
-One of the reasons of that is because of Gitlab Runner. It thinks that managing config file by gitlab-runner service itself is a good idea. So when we try to manage runner instance we should keep in mind that service can add parameter at some points to configuration file. This idioma brings us to problem. How can we manage some runner idepotently with ansible? This module manages runner with some limitations with no overcomplication of module code, without bashsible and with no yaml programming though...
+One of the reasons is because of Gitlab Runner. It thinks that managing config file by gitlab-runner service itself is a good idea. So when we try to manage runner instance we should keep in mind that service can add parameter at some points to configuration file. This idioma brings us to problem. How can we manage some runner idepotently with ansible? This module manages runner with some limitations with no overcomplication of module code, without bashsible and with no yaml programming though...
 
 ## Configuring Gitlab Runner
 
@@ -17,14 +17,14 @@ The following methods are supported:
 - Environ vars(see full list with 'gitlab-runner register --help')
 - Skeleton config file. See [Gitlab Runner Template](https://docs.gitlab.com/runner/register/#register-with-a-configuration-template) for details.
 
-Choose any method you like or even all of them at same time.
+Choose any method you like or even all of them at same time. More examples are bellow.
 
 If you need to change some config parameters you will have to re-register the instance.
-This could be done with `recreate` parameter. Also re-registration occures automatically when you changing authentication token.
+This could be done with `recreate` parameter. Also re-registration occures **automatically** when authentication token changed.
 
 ## Installation
 
-This module does require `toml` python module at target host. Beyond that no additional installation steps are required. Just place it to your [Ansible libs](https://docs.ansible.com/ansible/latest/reference_appendices/config.html#default-module-path) directory.
+This module require `toml` python module at target host. Beyond that no additional installation steps are required. Just place it to your [Ansible libs](https://docs.ansible.com/ansible/latest/reference_appendices/config.html#default-module-path) directory.
 
 ## Usage Examples
 
