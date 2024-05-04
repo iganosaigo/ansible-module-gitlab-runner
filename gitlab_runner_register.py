@@ -177,9 +177,13 @@ changed:
   description: Return changed for aix_filesystems actions as true or false.
   returned: always
   type: bool
-msg:
-  description: Return message regarding the action.
+runner_state:
+  description: Return current state of Runner
   returned: always
+  type: str
+msg:
+  description: Action done with reregistration
+  returned: when registering fist time, unregistering or reregistering
   type: str
 """
 import os
@@ -205,10 +209,10 @@ RUNNER_ID = "/etc/gitlab-runner/.runner_system_id"
 
 
 class RunnerState(Enum):
-    RECREATED = "Recreated"
+    REREGISTERED = "Reregistered"
     REGISTERED = "Registered"
     UNREGISTERED = "Unregistered"
-    TOKEN_MISMATCH = "Token Reseted"
+    TOKEN_MISMATCH = "Token Mismatch"
     NAME_MISMATCH = "Runner Name Mismatch"
 
 
@@ -226,7 +230,6 @@ class Runner(object):
         self.global_params = self.module.params.get("global_params")
         self.template_file = self.module.params.get("template_file")
         self.recreate = self.module.params.get("recreate")
-        self.config_content = {}
         self.warnings = []
         self.current_name = None
 
@@ -258,20 +261,26 @@ class Runner(object):
         already added by gitlab-runner service itself.
         """
         try:
-            os.stat(RUNNER_CONFIG)
             os.stat(RUNNER_ID)
         except FileNotFoundError:
             # We assume that gitlab-runner after start creates config
             self.module.fail_json(
-                msg="Runner didn't initialize it's minimal config",
+                msg="Runner didn't initialize it's runner_id.",
             )
 
-    def get_state(self):
+        try:
+            os.stat(RUNNER_CONFIG)
+        except FileNotFoundError:
+            return False
+
+        return True
+
+    def get_state(self, config: dict):
         """
         Simple mapping of different gitlab-runner states
         """
         try:
-            runner_section = self.config_content["runners"][0]
+            runner_section = config["runners"][0]
             runner_name = runner_section["name"]
             runner_token = runner_section["token"]
         except (IndexError, KeyError):
@@ -279,7 +288,10 @@ class Runner(object):
         if runner_token != self.token:
             return RunnerState.TOKEN_MISMATCH
         if runner_name != self.name:
-            self.warnings.append(RunnerState.NAME_MISMATCH.value)
+            miss_state = RunnerState.NAME_MISMATCH.value
+            self.warnings.append(
+                f"{miss_state}. Perhaps re-registration required.",
+            )
             self.current_name = runner_name
 
         return RunnerState.REGISTERED
@@ -390,45 +402,56 @@ class Runner(object):
         """
         Main logic entrypoint.
         """
-        self.check_service()
-        self.verify_config_exists()
-        self.config_content = self.load_config_content()
-
-        state_before = self.get_state()
         state_after = None
-        self.command_results["state_before"] = state_before.value
-        self.command_results["state_after"] = None
+        self.check_service()
+
+        config_exists = self.verify_config_exists()
+
+        if config_exists:
+            config_content = self.load_config_content()
+            state_before = self.get_state(config_content)
+        else:
+            state_before = RunnerState.UNREGISTERED
 
         if self.state == "present":
             if state_before == RunnerState.UNREGISTERED:
                 self.do_enable()
                 state_after = RunnerState.REGISTERED
+                self.command_results["msg"] = "Init registering Runner"
 
             elif state_before == RunnerState.TOKEN_MISMATCH:
                 self.do_reenable()
-                state_after = RunnerState.RECREATED
+                state_after = RunnerState.REREGISTERED
+                self.command_results["msg"] = (
+                    "Reregistering Runner due to Token mismatch"
+                )
 
             elif state_before == RunnerState.REGISTERED:
                 if self.recreate:
                     self.do_reenable()
-                    state_after = RunnerState.RECREATED
+                    state_after = RunnerState.REREGISTERED
+                    self.command_results["msg"] = (
+                        "Force reregistering Runner due to recreate option"
+                    )
 
         elif self.state == "absent":
             if state_before == RunnerState.REGISTERED:
                 self.do_disable()
                 state_after = RunnerState.UNREGISTERED
+                self.command_results["msg"] = "Unregistering Runner"
 
         if state_after:
-            self.command_results["state_after"] = state_after.value
+            self.command_results["runner_state"] = state_after.value
         else:
-            self.command_results["state_after"] = state_before.value
+            self.command_results["runner_state"] = state_before.value
 
         if self.warnings:
             self.command_results["warnings"] = self.warnings
 
         self.command_results["changed"] = (
-            state_before.value != self.command_results["state_after"]
+            state_before.value != self.command_results["runner_state"]
         )
+
         self.module.exit_json(**self.command_results)
 
 
@@ -444,26 +467,41 @@ def main():
     gitlab_runner.act()
 
 
-argument_spec = dict(
-    api_url=dict(required=True, type="str"),
-    state=dict(
-        choices=["present", "absent"],
-        default="present",
-    ),
-    token=dict(required=True, type="str", no_log=True),
-    name=dict(required=True, type="str"),
-    executor=dict(type="str"),
-    default_image=dict(type="str"),
-    global_params=dict(type="dict"),
-    environ_vars=dict(type="dict"),
-    template_file=dict(type="str"),
-    recreate=dict(type="bool", default=False),
-)
+def get_default_globals():
+    params = {
+        "concurrent": 1,
+        "check_interval": 0,
+        "connection_max_age": "15m0s",
+        "shutdown_timeout": 0,
+        "session_server": {
+            "session_timeout": 1800,
+        },
+    }
+    return params
+
+
+def make_argument_spec():
+    spec = dict(
+        api_url=dict(required=True, type="str"),
+        state=dict(
+            choices=["present", "absent"],
+            default="present",
+        ),
+        token=dict(required=True, type="str", no_log=True),
+        name=dict(required=True, type="str"),
+        executor=dict(type="str"),
+        default_image=dict(type="str"),
+        global_params=dict(type="dict", default=get_default_globals()),
+        environ_vars=dict(type="dict"),
+        template_file=dict(type="str"),
+        recreate=dict(type="bool", default=False),
+    )
+    return spec
 
 
 def setup_module_object():
     module = AnsibleModule(
-        argument_spec=argument_spec,
+        argument_spec=make_argument_spec(),
         supports_check_mode=False,
         required_one_of=[
             [
